@@ -1,4 +1,5 @@
 numpy
+openai
 tqdm
 tiktoken
 pandas

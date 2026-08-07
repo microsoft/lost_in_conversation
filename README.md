@@ -83,6 +83,59 @@ Then create a folder in `tasks/<new_task>` with your task logic files, and add a
 - Simulation of the `code` task does not work on Windows (due to issue with eval code working only on Unix)
 - Simulation of the `database` task requires downloading test databases (<5 Gb) and copying the files to `data/spider/databases/`. See instructions in `data/spider/README.md`
 
+## SWE-Bench evolving-intent experiments
+
+The `swe` task adapter loads public, source-bound SWE-Bench tasks from
+`data/swe/evolving_swe_v1.jsonl`. Each task retains the official issue and base
+commit together with a role-preserving requirement history and a future branch.
+Private gold patches and verifier labels are intentionally kept outside this
+repository's model-facing dataset.
+
+For the locked qingyuntop experiment, configure the OpenAI-compatible client
+without placing secrets in the repository:
+
+```sh
+export OPENAI_API_KEY='...'
+export OPENAI_BASE_URL='https://api.qingyuntop.top/v1'
+export LOST_CONVERSATION_ALLOWED_MODEL='gpt-5.4-mini'
+python run_simulations.py --dataset_file data/swe/evolving_swe_v1.jsonl \
+  --tasks swe --models gpt-5.4-mini --system_model gpt-5.4-mini
+```
+
+The adapter extracts source-only unified diffs but does not equate a parseable
+diff with a correct repair. Executable correctness is scored separately by the
+private Docker verifier so gold patches and tests never leak into prompts.
+
+### Implementation status
+
+| Component | Status |
+| --- | --- |
+| Public evolving-intent dataset adapter | Complete |
+| Six-repository, current/reactivate task loading | Complete |
+| Role-preserving checkpoint transcript | Complete |
+| Source-only unified-diff extraction | Complete |
+| qingyuntop OpenAI-compatible endpoint support | Complete |
+| Request/served `gpt-5.4-mini` model lock | Complete |
+| Private checkout and Docker verifier bridge | In progress |
+| Full/concat/multi-turn executable comparison | Pending verifier bridge |
+
+The checked-in dataset contains 12 public task rows: six frozen SWE-Bench
+Verified repository instances crossed with `current` and `reactivate` future
+branches. It contains no official gold patch, private branch-test patch, or
+verifier label. Those artifacts stay on the evaluation host and are joined by
+`sample_id` only after model generation.
+
+Run the focused adapter and model-lock tests with:
+
+```sh
+OPENAI_API_KEY=test-only-placeholder \
+  python -m unittest discover -s tests -v
+```
+
+The current evaluator deliberately returns `requires_external_verifier=true`
+and no correctness score. This prevents a syntactically parseable diff from
+being reported as a successful SWE repair before the isolated verifier has run.
+
 ## Dataset Contents
 
 We release sharded instructions required to run simulation. You can find the file at `data/sharded_instructions_600.json`. Each sample has the following schema:

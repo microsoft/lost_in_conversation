@@ -1,6 +1,23 @@
 from openai import OpenAI, AzureOpenAI
 import os, time, json, re
 
+
+def validate_model_lock(request_model, served_model=None):
+    """Enforce an optional request/response model allow-list."""
+    allowed_model = os.environ.get("LOST_CONVERSATION_ALLOWED_MODEL", "").strip()
+    if not allowed_model:
+        return
+    if request_model != allowed_model:
+        raise ValueError(
+            f"Request model {request_model!r} does not match locked model "
+            f"{allowed_model!r}"
+        )
+    if served_model is not None and served_model != allowed_model:
+        raise RuntimeError(
+            f"Served model {served_model!r} does not match locked model "
+            f"{allowed_model!r}"
+        )
+
 def format_messages(messages, variables={}):
     last_user_msg = [msg for msg in messages if msg["role"] == "user"][-1]
 
@@ -24,7 +41,10 @@ class OpenAI_Model:
             self.client = AzureOpenAI(api_key=os.environ["AZURE_OPENAI_API_KEY"], azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"], api_version="2024-10-01-preview")
         else:
             assert "OPENAI_API_KEY" in os.environ
-            self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+            self.client = OpenAI(
+                api_key=os.environ["OPENAI_API_KEY"],
+                base_url=os.environ.get("OPENAI_BASE_URL"),
+            )
 
     def cost_calculator(self, model, usage, is_batch_model=False):
         is_finetuned, base_model = False, model
@@ -59,7 +79,7 @@ class OpenAI_Model:
         elif base_model.startswith("o1-preview") or base_model == "o1":
             inp_token_cost, out_token_cost = 0.015, 0.06
         else:
-            raise Exception(f"Model {model} pricing unknown, please add")
+            return 0.0
 
         cache_discount = 0.5 # cached tokens are half the price
         batch_discount = 0.5 # batch API is half the price
@@ -70,6 +90,7 @@ class OpenAI_Model:
         return total_usd
 
     def generate(self, messages, model="gpt-4o-mini", timeout=30, max_retries=3, temperature=1.0, is_json=False, return_metadata=False, max_tokens=None, variables={}):
+        validate_model_lock(model)
         kwargs = {}
         if is_json:
             kwargs["response_format"] = { "type": "json_object" }
@@ -95,6 +116,7 @@ class OpenAI_Model:
                     time.sleep(4)
 
         response = response.to_dict()
+        validate_model_lock(model, response.get("model"))
         usage = response['usage']
         response_text = response["choices"][0]["message"]["content"]
         total_usd = self.cost_calculator(model, usage)
@@ -104,7 +126,7 @@ class OpenAI_Model:
 
         if not return_metadata:
             return response_text
-        return {"message": response_text, "total_tokens": usage['total_tokens'], "prompt_tokens": usage['prompt_tokens'], "prompt_tokens_cached": prompt_tokens_cached, "completion_tokens": usage['completion_tokens'], "total_usd": total_usd}
+        return {"message": response_text, "request_model": model, "served_model": response.get("model"), "total_tokens": usage['total_tokens'], "prompt_tokens": usage['prompt_tokens'], "prompt_tokens_cached": prompt_tokens_cached, "completion_tokens": usage['completion_tokens'], "total_usd": total_usd}
 
     def generate_json(self, messages, model="gpt-4o-mini", **kwargs):
         response = self.generate(messages, model, is_json=True, **kwargs)
